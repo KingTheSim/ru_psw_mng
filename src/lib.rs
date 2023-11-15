@@ -1,7 +1,8 @@
 pub mod ru_pws_mng_modules;
-use ring::error::Unspecified;
+
+use ru_pws_mng_modules::hashing_functions::{self, hash_checker};
 use clap::{Arg, Command};
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection};
 
 fn conn() -> Connection {
     Connection::open("sqlite.db").unwrap()
@@ -20,6 +21,7 @@ pub fn table_creation() {
         user_id INTEGER,
         website TEXT NOT NULL,
         password TEXT NOT NULL,
+        UNIQUE(user_id, website),
         FOREIGN KEY (user_id) REFERENCES users(user_id)
     );";
 
@@ -27,12 +29,12 @@ pub fn table_creation() {
 
     match result {
         Ok(_) => println!("Tables created"),
-        Err(err) => eprintln!("Error creating tables: {}", err)
+        Err(err) => eprintln!("Error creating tables: {err}")
     }
 }
 
-pub fn user_creation(username: &str, password: &str) {
-    let (hashed_password, salt) = match ru_pws_mng_modules::hashing_functions::hashing_function(password) {
+fn user_creation(username: &str, password: &str) {
+    let (hashed_password, salt) = match hashing_functions::hashing_function(password) {
         Ok((hash, salt)) => (hash, salt),
         Err(err) => {
             eprintln!("Error hashing password: {err}");
@@ -73,16 +75,49 @@ pub fn save_password(username: &str, user_password: &str, website: &str, passwor
         }
     };
 
-    if !ru_pws_mng_modules::hashing_functions::hash_checker(user_password, &hashed_password, &salt) {
-        println!("Incorrect password");
+    if !hash_checker(user_password, &hashed_password, &salt) {
+        eprintln!("Incorrect password");
         return;
     };
 
-    let result = conn().execute("INSERT INTO passwords (user_id, website, password) VALUES (?1, ?2, ?3)", (user_id, website, password));
+    let result = conn().execute("INSERT INTO passwords (user_id, website, password) VALUES (?1, ?2, ?3);", (user_id, website, password));
 
     match result {
         Ok(_) => println!("User {username} saved a password for {website}"),
-        Err(err) => eprintln!("Error saving password: {}", err)
+        Err(err) => eprintln!("Error saving password: {err}")
+    }
+}
+
+fn get_password(username: &str, password: &str, website: &str) {
+    let (user_id, password_hash, salt) = match get_user_info(username) {
+        Some(info) => info,
+        None => {
+            eprintln!("User {username} not found");
+            return;
+        }
+    };
+
+    if !hash_checker(password, &password_hash, &salt) {
+        eprintln!("Incorrect password");
+        return;
+    }
+
+    let curr_con = conn();
+
+    let result = curr_con.prepare("SELECT password FROM passwords WHERE user_id = ?1 AND website = ?2;");
+    match result {
+        Ok(mut res) => {
+            let pass_result = res.query_row(params![user_id, website], |row| {
+                let password: String = row.get(0)?;
+                Ok(password)
+            });
+
+            match pass_result {
+                Ok(password) => println!("Password for {username} on {website} is {password}"),
+                Err(_) => eprintln!("Password for {username} on {website} not found")
+            }
+        }
+        Err(err) => eprintln!("Error preparing statement: {err}"),
     }
 }
 
@@ -101,6 +136,11 @@ pub fn run() {
             .about("Create a new user account")
             .arg(Arg::new("username").required(true).index(1))
             .arg(Arg::new("password").required(true).index(2)))
+        .subcommand(Command::new("get")
+            .about("Get a stored password")
+            .arg(Arg::new("username").required(true).index(1))
+            .arg(Arg::new("password").required(true).index(2))
+            .arg(Arg::new("website").required(true).index(3)))
         .get_matches();
 
     match matches.subcommand() {
@@ -117,6 +157,13 @@ pub fn run() {
             let password = create_matches.get_one::<String>("password").unwrap().as_str();
 
             user_creation(username, password);
+        }
+        Some(("get", get_matches)) => {
+            let username = get_matches.get_one::<String>("username").unwrap().as_str();
+            let password = get_matches.get_one::<String>("password").unwrap().as_str();
+            let website = get_matches.get_one::<String>("website").unwrap().as_str();
+
+            get_password(username, password, website);
         }
         _ => println!("Invalid command. Use 'save' or 'info'.")
     }
