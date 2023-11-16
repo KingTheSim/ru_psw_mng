@@ -1,6 +1,6 @@
 pub mod ru_pws_mng_modules;
 
-use ru_pws_mng_modules::hashing_functions::{self, hash_checker};
+use ru_pws_mng_modules::hashing_functions::{hash_checker, hashing_function};
 use clap::{Arg, Command};
 use rusqlite::{params, Connection};
 
@@ -34,7 +34,7 @@ pub fn table_creation() {
 }
 
 fn user_creation(username: &str, password: &str) {
-    let (hashed_password, salt) = match hashing_functions::hashing_function(password) {
+    let (hashed_password, salt) = match hashing_function(password) {
         Ok((hash, salt)) => (hash, salt),
         Err(err) => {
             eprintln!("Error hashing password: {err}");
@@ -42,7 +42,10 @@ fn user_creation(username: &str, password: &str) {
         }
     };
 
-    let result = conn().execute("INSERT INTO users (username, hashed_password, salt) VALUES (?1, ?2, ?3);", (&username, &hashed_password, &salt));
+    let result = conn().execute(
+        "INSERT INTO users (username, hashed_password, salt) VALUES (?1, ?2, ?3);",
+        params![&username, &hashed_password, &salt]
+    );
 
     match result {
         Ok(_) => println!("User created"),
@@ -80,7 +83,10 @@ pub fn save_password(username: &str, user_password: &str, website: &str, passwor
         return;
     };
 
-    let result = conn().execute("INSERT INTO passwords (user_id, website, password) VALUES (?1, ?2, ?3);", (user_id, website, password));
+    let result = conn().execute(
+        "INSERT INTO passwords (user_id, website, password) VALUES (?1, ?2, ?3);",
+        params![&user_id, &website, &password]
+    );
 
     match result {
         Ok(_) => println!("User {username} saved a password for {website}"),
@@ -121,6 +127,41 @@ fn get_password(username: &str, password: &str, website: &str) {
     }
 }
 
+fn change_user_password(username: &str, password: &str, new_password: &str) {
+    let (_, password_hash, salt) = match get_user_info(username) {
+        Some(info) => info,
+        None => {
+            eprintln!("User {username} not found");
+            return;
+        }
+    };
+
+    if !hash_checker(password, &password_hash, &salt) {
+        eprintln!("Incorrect password");
+        return;
+    }
+
+    let curr_conn = conn();
+
+    let (password_hash, salt) = match hashing_function(new_password) {
+        Ok((hash, salt)) => (hash, salt),
+        Err(err) => {
+            eprintln!("Error hashing password: {err}");
+            return;
+        }
+    };
+
+    let result = curr_conn.execute(
+        "UPDATE users SET hashed_password = ?1, salt = ?2 WHERE username = ?3;", 
+        params![&password_hash, &salt, &username]
+    );
+
+    match result {
+        Ok(_) => println!("Password for user {username} updated successfully"),
+        Err(err) => eprintln!("Error updating password: {err}"),
+    }
+}
+
 pub fn run() {
     let matches = Command::new("Rust password manager")
         .version("0.1.0")
@@ -141,6 +182,11 @@ pub fn run() {
             .arg(Arg::new("username").required(true).index(1))
             .arg(Arg::new("password").required(true).index(2))
             .arg(Arg::new("website").required(true).index(3)))
+        .subcommand(Command::new("change_user_password")
+            .about("Changing the main user password")
+            .arg(Arg::new("username").required(true).index(1))
+            .arg(Arg::new("password").required(true).index(2))
+            .arg(Arg::new("new_password").required(true).index(3)))
         .get_matches();
 
     match matches.subcommand() {
@@ -164,6 +210,13 @@ pub fn run() {
             let website = get_matches.get_one::<String>("website").unwrap().as_str();
 
             get_password(username, password, website);
+        }
+        Some(("change_user_password", change_user_password_matches)) => {
+            let username = change_user_password_matches.get_one::<String>("username").unwrap().as_str();
+            let password = change_user_password_matches.get_one::<String>("password").unwrap().as_str();
+            let new_password = change_user_password_matches.get_one::<String>("new_password").unwrap().as_str();
+
+            change_user_password(username, password, new_password);
         }
         _ => println!("Invalid command. Use 'save' or 'info'.")
     }
