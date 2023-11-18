@@ -255,6 +255,6 @@ pub fn run() {
 
             delete_user(username, password);
         }
-        _ => println!("Invalid command. Use 'save' or 'info'.")
+        _ => println!("Invalid command. Use 'save', 'create', 'get', 'change_user_password' or 'delete_user'.")
     }
 }
