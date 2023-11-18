@@ -9,3 +9,6 @@ Implemented a get function that returns the saved password for a user on a websi
 
 Update 16.11.2023
 Implemented a function to change the user's main password. Next, I'll write a function to change the saved password for a certain website. Also, my manager needs an option to clear all of passwords of a user.
+
+Update 18.11.2023
+Implemented a function to delete a user from the database. Next, I'll work on the UI.

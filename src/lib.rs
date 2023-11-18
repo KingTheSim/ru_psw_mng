@@ -22,7 +22,7 @@ pub fn table_creation() {
         website TEXT NOT NULL,
         password TEXT NOT NULL,
         UNIQUE(user_id, website),
-        FOREIGN KEY (user_id) REFERENCES users(user_id)
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE
     );";
 
     let result = conn().execute_batch(query);
@@ -69,7 +69,7 @@ fn get_user_info(username: &str) -> Option<(i32, [u8; 64], [u8; 64])> {
     }
 }
 
-pub fn save_password(username: &str, user_password: &str, website: &str, password: &str) {
+fn save_password(username: &str, user_password: &str, website: &str, password: &str) {
     let (user_id, hashed_password, salt) = match get_user_info(username) {
         Some(info) => info,
         None => {
@@ -139,7 +139,7 @@ fn change_user_password(username: &str, password: &str, new_password: &str) {
     if !hash_checker(password, &password_hash, &salt) {
         eprintln!("Incorrect password");
         return;
-    }
+    };
 
     let curr_conn = conn();
 
@@ -159,6 +159,33 @@ fn change_user_password(username: &str, password: &str, new_password: &str) {
     match result {
         Ok(_) => println!("Password for user {username} updated successfully"),
         Err(err) => eprintln!("Error updating password: {err}"),
+    }
+}
+
+fn delete_user(username: &str, password: &str) {
+    let (user_id, password_hash, salt) = match get_user_info(username) {
+        Some(info) => info,
+        None => {
+            eprintln!("User {username} not found");
+            return;
+        }
+    };
+
+    if !hash_checker(password, &password_hash, &salt) {
+        eprintln!("Incorrect password");
+        return;
+    };
+
+    let curr_conn = conn();
+
+    let result = curr_conn.execute(
+        "DELETE FROM users WHERE user_id = ?1",
+        params![user_id]
+    );
+
+    match result {
+        Ok(_) => println!("User {username} deleted successfully"),
+        Err(err) => eprintln!("Error deleting user: {err}")
     }
 }
 
@@ -187,6 +214,10 @@ pub fn run() {
             .arg(Arg::new("username").required(true).index(1))
             .arg(Arg::new("password").required(true).index(2))
             .arg(Arg::new("new_password").required(true).index(3)))
+        .subcommand(Command::new("delete_user")
+            .about("Delete user")
+            .arg(Arg::new("username").required(true).index(1))
+            .arg(Arg::new("password").required(true).index(2)))
         .get_matches();
 
     match matches.subcommand() {
@@ -217,6 +248,12 @@ pub fn run() {
             let new_password = change_user_password_matches.get_one::<String>("new_password").unwrap().as_str();
 
             change_user_password(username, password, new_password);
+        }
+        Some(("delete_user", delete_user_matches)) => {
+            let username = delete_user_matches.get_one::<String>("username").unwrap().as_str();
+            let password = delete_user_matches.get_one::<String>("password").unwrap().as_str();
+
+            delete_user(username, password);
         }
         _ => println!("Invalid command. Use 'save' or 'info'.")
     }
